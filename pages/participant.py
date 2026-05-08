@@ -77,8 +77,11 @@ def participant_page():
     # --- 1. MY ACTIVITIES ---
     if selected == "My Activities":
         st.title("📋 Your Participation Status")
+        
+        # 1. Fetch activities with dates for deadline checking
         query = """
-            SELECT t.team_name, t.admin_approval, h.hackathon_name, w.workshop_url
+            SELECT t.team_id, t.team_name, t.admin_approval, h.hackathon_id, 
+                   h.hackathon_name, h.end_date, w.workshop_url
             FROM team t
             JOIN team_members tm ON t.team_id = tm.team_id
             JOIN hackathon_table h ON t.hackathon_id = h.hackathon_id
@@ -86,6 +89,7 @@ def participant_page():
             WHERE tm.member_id = %s
         """
         results = execute_query(query, (user_id,), fetch=True)
+        
         if results:
             for row in results:
                 status = row['admin_approval']
@@ -93,10 +97,76 @@ def participant_page():
                     st.subheader(f"Team: {row['team_name']}")
                     st.write(f"**Hackathon:** {row['hackathon_name']}")
                     st.write(f"**Status:** {status}")
-                    if status == "Accepted":
-                        st.success(f"🔗 [Join Workshop]({row['workshop_url']})")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if status == "Accepted":
+                            st.success(f"🔗 [Join Workshop]({row['workshop_url']})")
+                    
+                    with col2:
+                        # Submit Button
+                        if st.button(f"Submit Project", key=f"sub_btn_{row['team_id']}"):
+                            st.session_state.submit_mode = True
+                            st.session_state.target_team = row
+                            st.rerun()
+
+            # --- PROJECT SUBMISSION FORM ---
+            if st.session_state.get('submit_mode'):
+                target = st.session_state.target_team
+                st.markdown("---")
+                with st.form("project_submission_form"):
+                    st.subheader(f"🚀 Project Submission: {target['hackathon_name']}")
+                    st.info(f"Team: {target['team_name']}")
+                    
+                    # User Inputs for verification
+                    in_team = st.text_input("Enter Team Name")
+                    in_hack = st.text_input("Enter Hackathon Name")
+                    in_proj = st.text_input("Project Name")
+                    in_github = st.text_input("GitHub Repository Link")
+                    
+                    submitted = st.form_submit_button("Finalize Submission")
+                    
+                    if submitted:
+                        from datetime import date
+                        curr_date = date.today()
+                        
+                        # 1. Check Deadline
+                        if target['end_date'] < curr_date:
+                            st.error(f"❌ Your deadline was {target['end_date']}. You can't submit now.")
+                        
+                        # 2. Verify Details (Team and Hackathon Names)
+                        elif in_team.strip().lower() != target['team_name'].lower() or \
+                             in_hack.strip().lower() != target['hackathon_name'].lower():
+                            st.error("❌ Verification Failed! Team or Hackathon name doesn't match.")
+                        
+                        # 3. Check Admin Approval Status
+                        elif target['admin_approval'] == 'Pending':
+                            st.warning(f"⚠️ You are not registered for {target['hackathon_name']} yet (Approval Pending).")
+                        
+                        # 4. Success: Update Project Table
+                        else:
+                            try:
+                                # Check if project entry exists first
+                                update_proj = """
+                                    UPDATE project 
+                                    SET github_link = %s, project_title = %s 
+                                    WHERE team_id = %s
+                                """
+                                execute_query(update_proj, (in_github, in_proj, target['team_id']))
+                                st.success("✅ Project updated and submitted successfully!")
+                                del st.session_state.submit_mode
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Database Error: {e}")
+                                
+                    if st.form_submit_button("Cancel"):
+                        del st.session_state.submit_mode
+                        st.rerun()
+
         else:
             st.info("You haven't joined any team yet.")
+
+        
 
     # --- 2. TEAM HUB ---
     # --- 2. TEAM HUB ---
@@ -587,7 +657,7 @@ def participant_page():
             st.write("[404 Found Official](https://linkedin.com)")
 
         # Footer message
-        st.markdown("<br><center><i>Made with ❤️ by 404 Found Team</i></center>", unsafe_allow_html=True)
+        st.markdown("<br><center><i>Made by 404 Found Team</i></center>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     participant_page()
